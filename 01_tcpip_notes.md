@@ -56,6 +56,53 @@ flowing over fiber, copper, or 5G.
 **QUIC** — newer; runs on UDP, adds reliability + encryption + faster handshake.
 HTTP/3 uses QUIC. Saves a lot of round-trips vs. TCP+TLS.
 
+![QUIC vs TCP+TLS handshake comparison](images/quic_vs_tcp_tls.png)
+
+### Quick aside: what is TLS?
+
+**TLS = Transport Layer Security.** It's the encryption layer that turns plain
+HTTP into HTTPS (the padlock in your browser). Two jobs:
+
+- **Encrypt** the traffic so nobody on the path can read it.
+- **Authenticate** the server (via a certificate) so you know you're really
+  talking to `bank.com` and not an impostor.
+
+TLS doesn't replace TCP — it sits **on top of TCP**, between TCP and HTTP:
+
+```
++--------+
+|  HTTP  |   <- application data
++--------+
+|  TLS   |   <- encryption / authentication
++--------+
+|  TCP   |   <- reliable transport
++--------+
+|  IP    |
++--------+
+```
+
+That's why the classic stack is "HTTPS = HTTP over TLS over TCP."
+
+### Why QUIC is faster (reading the diagram)
+
+Look at the left side: with **TCP + TLS** you pay for **two separate handshakes**
+before any HTTP data flows:
+
+1. TCP handshake — SYN, SYN+ACK, ACK (1 round-trip)
+2. TLS handshake — ClientHello, ServerHello, Finished (another round-trip)
+
+Only *then* can the HTTP Request go out. That's roughly **3 round-trips** of
+overhead before the first useful byte.
+
+On the right, **QUIC** combines transport + encryption into one protocol. Its
+handshake bundles what TCP and TLS were doing separately, so the HTTP Request
+goes out after about **1 round-trip**. On repeat visits to the same server,
+QUIC can even do **0-RTT** — sending HTTP data with the very first packet.
+
+For a single web request the savings are milliseconds; for a page that pulls
+dozens of resources, it adds up to noticeable speedup. That's why HTTP/3 was
+built on QUIC and why Google, Cloudflare, and Facebook were so eager to ship it.
+
 ### Network layer
 **Job:** move packets hop by hop across networks, anywhere on Earth.
 
