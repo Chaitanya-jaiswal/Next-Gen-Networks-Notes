@@ -217,9 +217,249 @@ This last bullet is the bridge to the cross-LAN walkthrough (Part 3, coming next
 
 ---
 
-## Still pending (will be added as we cover them)
+## Theme 2 (part B): Cross-LAN packet walkthrough (A -> R -> B)
 
-- Theme 2 (part B) — Cross-LAN packet walkthrough (the A -> R -> B example, slides 22-26)
-- Theme 3 — Wireless & mobile network basics (RAN, Core, standards)
-- Theme 4 — How we test/measure networks (analytical, simulation, emulation, measurement)
-- Theme 5 — KPIs (throughput, goodput, latency, jitter, QoE, MOS)
+> The single most important example in the whole TCP/IP recap. Segata spends
+> 5 slides on it. Almost every later topic (VLAN, VPN, VXLAN, SDN) is a tweak
+> on this exact mechanism.
+
+### Topology
+
+Two LANs joined by a router R.
+
+```
+   LAN 1: 111.111.111.0/24                LAN 2: 222.222.222.0/24
+
+      A                                                 B
+      |  111.111.111.111                                |  222.222.222.222
+      |  MAC-A                                          |  MAC-B
+      |                                                 |
+      |              R                                  |
+      +----------+   +----+----------------------+      |
+                 |   |    |                      |      |
+                 +---+    +----------------------+------+
+                  eth0                      eth1
+              111.111.111.110         222.222.222.220
+                  MAC-R1                  MAC-R2
+```
+
+Assumptions:
+- A and B are on **different** networks -> they cannot talk directly.
+- R is the gateway for both LANs (one IP/MAC per interface).
+- A already knows B's IP (somehow), R's IP (from DHCP), and R's MAC (from ARP).
+
+### Step 1 — A builds the packet
+
+A applies its subnet mask, sees that B is **not** local, so it sends to the gateway.
+
+```
++---- Ethernet frame ----+
+|  MAC src: MAC-A        |  <- me
+|  MAC dst: MAC-R1       |  <- gateway's MAC on my side
+|  +---- IP datagram ----+
+|  |  IP src: 111.111.111.111 (A)
+|  |  IP dst: 222.222.222.222 (B)   <- final destination
+|  |  ...payload...
+|  +-------------------+
++------------------------+
+```
+
+**Subtlety:** IP destination is B (final dest), MAC destination is R (next hop).
+
+### Step 2 — Frame reaches R
+
+- R sees its own MAC as destination -> accepts the frame.
+- R strips the Ethernet header. Only the IP datagram remains.
+- R consults its routing table for `222.222.222.x` -> "send out eth1".
+
+### Step 3 — R rewraps and forwards to B
+
+R does ARP on LAN 2 to find B's MAC (or uses its cache), then builds a fresh frame.
+
+```
++---- Ethernet frame ----+
+|  MAC src: MAC-R2       |  <- R's MAC on LAN 2
+|  MAC dst: MAC-B        |  <- B is local from R's view
+|  +---- IP datagram ----+
+|  |  IP src: 111.111.111.111 (A)   <- UNCHANGED
+|  |  IP dst: 222.222.222.222 (B)   <- UNCHANGED
+|  |  ...payload...
+|  +-------------------+
++------------------------+
+```
+
+### What changed, what didn't
+
+| Field | A -> R | R -> B | Changed? |
+|---|---|---|---|
+| IP source | A | A | no |
+| IP destination | B | B | no |
+| MAC source | MAC-A | MAC-R2 | yes |
+| MAC destination | MAC-R1 | MAC-B | yes |
+
+### Step 4 — B receives
+
+B sees its MAC as destination -> accepts. Sees its IP as destination -> processes payload. Done.
+
+### The single sentence to remember
+
+> **End-to-end addresses (IP) stay the same the entire journey.**
+> **Hop-by-hop addresses (MAC) get rewritten at every router.**
+
+### Why this matters for the rest of the course
+
+Most "next-gen" technologies are tweaks on this template:
+
+| Technology | What it changes |
+|---|---|
+| **VLAN** | Adds a 4-byte tag inside the Ethernet frame so multiple virtual LANs share one switch. |
+| **VPN** | Encrypts the entire IP datagram and stuffs it inside a new IP datagram (tunneling). |
+| **VXLAN** | Stuffs the entire Ethernet frame inside a UDP/IP packet to ship across a routed datacenter. |
+| **SDN** | A central controller dictates what routers do instead of distributed routing protocols. |
+
+---
+
+## Theme 3: Wireless & Mobile Network Basics
+
+### Wired vs Wireless tradeoff
+
+| | Wired | Wireless |
+|---|---|---|
+| Capacity per user | Dedicated per cable | **Shared** with everyone in range |
+| Interference | Controllable | Constant battle |
+| Cost to deploy | Expensive | Cheaper |
+| Reach | Stops at the cable | Anywhere in range |
+| Mobility | None | Yes |
+
+> One-liner: wired is fast and predictable but immobile; wireless is mobile
+> but you fight physics every day. Every wireless headache traces back to
+> "shared resource + harsh environment."
+
+### Three pieces of any wireless network
+
+```
+   [phone] )) (( [AP / base station] ----- wired backhaul ----- [Core / Internet]
+   [laptop] ))((
+```
+
+1. **Wireless hosts** — phones, laptops, IoT. May or may not be mobile.
+2. **Base station / access point** — relay between radio side and wired backbone.
+   Handles medium-access coordination (CSMA/CA for WiFi, scheduled slots for cellular).
+3. **Network infrastructure** — the wired backbone, eventually the internet.
+
+### Mobile network architecture: RAN vs Core
+
+```
+   Phone --- [eNB / gNB] --- [Core] --- Internet
+             <--- RAN --->   <- CN ->
+```
+
+- **RAN (Radio Access Network)** — towers/antennas, protocols that turn radio
+  into packets. Tower called **eNodeB** in LTE, **gNodeB** in 5G.
+- **CN (Core Network)** — operator backbone: billing, mobility tracking,
+  authentication, gateway to internet.
+- Splitting them lets each side be upgraded independently.
+
+> 5G heavily virtualizes both the Core and (increasingly) the RAN —
+> running them as software on commodity servers. Direct application of
+> NFV and SDN.
+
+### Wireless standards landscape
+
+| Category | Range | Examples | Use case |
+|---|---|---|---|
+| **WPAN** | ~10 m | Bluetooth, ZigBee | Headphones, IoT |
+| **WLAN** | ~100 m | WiFi (802.11) | Home/office internet |
+| **WMAN** | ~km | WiMAX | City broadband (legacy) |
+| **WAN** | regional | GSM, UMTS, LTE, 5G | Phones, anywhere |
+
+Trends to remember:
+- Each step up trades data rate for coverage.
+- WiFi keeps pushing right on the chart (802.11ax / Wi-Fi 6 -> gigabit).
+- 5G blurs the line between WAN and WLAN.
+- **802.11p** is a special flavor of WiFi tuned for cars -> the SDR labs use it.
+
+---
+
+## Theme 4: How we test/measure networks
+
+Four methodologies, each with different tradeoffs.
+
+| Method | What it is | Speed | Accuracy | Cost |
+|---|---|---|---|---|
+| **Analytical** | Pure math (queueing theory, probability) | Very fast | Often inaccurate | Free |
+| **Simulation** | Software model, no real hw (ns-3, ns-2) | Slow per run | Better | Software |
+| **Emulation** | Real OS / real stack, virtual topology (Kathará, Mininet) | Slower | Very close to reality | Workstation |
+| **Measurement** | Build the actual thing (testbed) | Slowest | Gold standard | Real hardware |
+
+**Going down the list:** closer to reality, more time/money/complexity.
+
+**This course uses two heavily:**
+- **Emulation** with **Kathará** — for SDN, VPN, VXLAN labs.
+- **Measurement** with **USRP / CUBE EVK** — for SDR labs.
+
+> For your project: SDN projects = emulation (Kathará). SDR projects = measurement (real radios).
+
+---
+
+## Theme 5: KPIs (what your project will be graded on)
+
+### Throughput
+Rate of successful message delivery. Measured in bps. The `iperf` tool measures this.
+
+### Goodput
+**Useful** throughput delivered to the app — excludes retransmissions and overhead headers.
+- Always **<=** throughput.
+- Example: 100 Mbps throughput with 30% retransmits/headers -> ~70 Mbps goodput.
+
+### Link utilization
+Fraction of a link's capacity in use. High = efficient. Too high = congestion.
+Directly relevant to the **network slicing** project.
+
+### Latency
+Time for a packet to travel source -> destination.
+- **One-way** latency: hard to measure (clock sync needed).
+- **RTT (Round-Trip Time)**: easy with `ping`, most commonly quoted.
+
+For some apps, latency > throughput in importance (gaming, voice, autonomous cars).
+
+### Jitter
+**Variation** in latency between consecutive packets.
+- Same average latency can have wildly different jitter.
+- Jitter kills real-time media (voice, video). Smoothed with **playout buffers** at the
+  cost of extra latency.
+
+### Quality of Experience (QoE) and Mean Opinion Score (MOS)
+Subjective, human-centric metrics.
+- **QoE** — overall user delight/annoyance.
+- **MOS** — 1 (bad) to 5 (excellent) score for media quality.
+
+These exist because throughput isn't the whole story: 100 Mbps that drops every 5s
+gives terrible QoE.
+
+### Modern apps demand different things
+
+| App | Cares most about |
+|---|---|
+| Web browsing | Latency + throughput |
+| Video streaming | Throughput, low jitter |
+| VoIP / video call | Low latency + low jitter |
+| Online gaming | Low latency above all |
+| Autonomous driving | Low latency + reliability |
+| IoT sensor swarm | Massive scale, latency-tolerant |
+| Cloud storage | Throughput, latency-tolerant |
+
+This diversity is **why next-gen networks need flexibility** — one-size-fits-all
+won't satisfy a self-driving car *and* a backup job at the same time.
+This is the seed of the **network slicing** idea later in the course.
+
+---
+
+## PDF 2 Final Recap
+
+1. The **5-layer stack** and each layer's job.
+2. The **two-address model** (IP end-to-end, MAC hop-by-hop) + A -> R -> B walkthrough.
+3. **DHCP** and **ARP** — how a host connects and finds neighbors.
+4. **Wireless basics** — RAN, Core, WPAN/WLAN/WMAN/WAN.
+5. **Test methodologies** + the **6 KPIs** (throughput, goodput, utilization, latency,
+   jitter, QoE/MOS).
